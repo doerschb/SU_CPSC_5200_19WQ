@@ -160,9 +160,28 @@ namespace restapi.Models
         public AnnotatedTimecardLine AddLine(TimecardLine timecardLine)
         {
             var annotatedLine = new AnnotatedTimecardLine(timecardLine);
+            annotatedLine.LineNumber = Lines.Count +1;//use line number instead of GUID
 
             Lines.Add(annotatedLine);
 
+            return annotatedLine;
+        }
+        public AnnotatedTimecardLine UpdateLine(int index, TimecardLine timecardLine)
+        {
+            var annotatedLine = new AnnotatedTimecardLine(timecardLine);
+            //FIXME: This will probably fail if all fields are not in timecardLine
+            Lines[index].Week = timecardLine.Week;
+             Lines[index].Day = timecardLine.Day;
+             Lines[index].Hours = timecardLine.Hours;
+             Lines[index].Project = timecardLine.Project;
+             Lines[index].Year = timecardLine.Year;      
+            return annotatedLine;
+        }
+        public AnnotatedTimecardLine ReplaceLine(int index, TimecardLine timecardLine)
+        {
+            var annotatedLine  = new AnnotatedTimecardLine(timecardLine);
+            Lines.RemoveAt(index);
+            Lines.Insert(index, annotatedLine);
             return annotatedLine;
         }
     }

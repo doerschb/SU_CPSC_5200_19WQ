@@ -56,6 +56,7 @@ namespace restapi.Controllers
         [HttpDelete("{id}")]
         [ProducesResponseType(200)]
         [ProducesResponseType(404)]
+        [ProducesResponseType(typeof(InvalidStateError), 409)]
         public IActionResult DeleteLine(string id)
         {
             Timecard timecard = Database.Find(id);
@@ -95,8 +96,30 @@ namespace restapi.Controllers
                 return NotFound();
             }
         }
+        //lineId must be an int in the URL
+        [HttpGet("{timecardId}/lines/{lineId}")]
+        [Produces(ContentTypes.TimesheetLine)]
+        [ProducesResponseType(typeof(Timecard), 200)]
+        [ProducesResponseType(404)]
+        public IActionResult GetOne(string timecardId, string lineId)
+        {
+            Timecard timecard = Database.Find(timecardId);
 
-        [HttpPost("{id}/lines")]
+            if (timecard != null) 
+            { 
+                var match = timecard.Lines.FirstOrDefault(x => x.LineNumber.ToString() == lineId);
+                if (match == null)
+                    return NotFound();
+                
+                return Ok(match);
+            }
+            else
+            {
+                return NotFound();
+            }
+        }
+
+        [HttpPost("{id}/lines")] //could also be PUT
         [Produces(ContentTypes.TimesheetLine)]
         [ProducesResponseType(typeof(AnnotatedTimecardLine), 200)]
         [ProducesResponseType(404)]
@@ -122,14 +145,89 @@ namespace restapi.Controllers
             }
         }
 
-        [HttpPost("{timecardId}/lines/{lineId}")]
+        //lineNumber is the lineId for now. (GUID can be used later)
+        //lineId must be an integer for the conversion, to string properties to hold.
+        [HttpPatch("{timecardId}/lines/{lineId}")]       
+        [Produces(ContentTypes.TimesheetLine)]        
+        [ProducesResponseType(typeof(EmptyTimecardError), 409)]
+        [ProducesResponseType(typeof(UpdateError), 409)]
+        [ProducesResponseType(typeof(MissingLineError), 409)]
         public IActionResult UpdateLine(string timecardId, string lineId, [FromBody] TimecardLine timecardLine)
         {
-            Timecard timecard = Database.Find(timecardId);
+            Timecard timecard = Database.Find(timecardId);      
 
             if (timecard == null)
             {
-                return NotFound();
+                return NotFound();            
+            }
+            else if (timecard.Status != TimecardStatus.Draft) {
+                return StatusCode(409, new UpdateError() { });
+            }
+            else 
+            {
+                //find the line that matches lineId
+                var match = timecard.Lines.FirstOrDefault(x => x.LineNumber.ToString() == lineId);
+                if(match != null)
+                {
+                    timecard.UpdateLine(timecard.Lines.IndexOf(match), timecardLine);
+                }
+                else
+                {
+                    return StatusCode(409, new MissingLineError() { });
+                }                   
+                //FIXME: UpdateLine updates all fields to match those passed into the request, so later versions should
+                //          allow for some fields to be left blank. null cases are also not accounted for in this version.
+                //          The likely next iteration might include some kind of overloading and/or checking each field
+                //          in timecardLine, and flagging (with a -1, perhaps) and checking for that flag upon setting, 
+                //          where nulls would be flagged as -1 as well, so as not to be updated. Removal of information
+                //          is not possible in this scheme.
+            }
+
+            if (timecard.Lines.Count < 1)
+            {
+                return StatusCode(409, new EmptyTimecardError() { });
+            }
+
+            return Ok();
+        }
+
+        //lineNumber is the lineId for now. (GUID can be used later)
+        //lineId must be an integer for the conversion, to string properties to hold.
+        [HttpPost("{timecardId}/lines/{lineId}")]        
+        [Produces(ContentTypes.TimesheetLine)]
+        [ProducesResponseType(typeof(EmptyTimecardError), 409)]
+        [ProducesResponseType(typeof(UpdateError), 409)]
+        [ProducesResponseType(typeof(MissingLineError), 409)]
+        public IActionResult ReplaceLine(string timecardId, string lineId, [FromBody] TimecardLine timecardLine)
+        {
+            Timecard timecard = Database.Find(timecardId);      
+
+            if (timecard == null)
+            {
+                return NotFound();            
+            }
+            else if (timecard.Status != TimecardStatus.Draft) {
+                return StatusCode(409, new UpdateError() { });
+            }
+            else 
+            {
+                //find the line that matches lineId
+                var match = timecard.Lines.FirstOrDefault(x => x.LineNumber.ToString() == lineId);
+                if(match != null)   {
+                    int index = (timecard.Lines.IndexOf(match));
+                    timecard.ReplaceLine(index, timecardLine);
+                }
+                 else
+                {
+                    return StatusCode(409, new MissingLineError() { });
+                }  
+
+               // var annotatedLine = timecard.(timecardLine);
+            }
+
+            if (timecard.Lines.Count < 1)
+            {
+                return StatusCode(409, new EmptyTimecardError() { });
             }
 
             return Ok();
@@ -159,12 +257,17 @@ namespace restapi.Controllers
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(InvalidStateError), 409)]
         [ProducesResponseType(typeof(EmptyTimecardError), 409)]
-        public IActionResult Submit(string id, [FromBody] Submittal submittal)
+        [ProducesResponseType(typeof(InvalidResource), 409)]
+        public IActionResult Submit(string id, [FromBody] DocumentResource resource)//resource must be same
         {
             Timecard timecard = Database.Find(id);
 
             if (timecard != null)
             {
+                
+                if (resource.Resource == null || timecard.Resource != resource.Resource){
+                    return StatusCode(409, new InvalidResource(){});
+                }
                 if (timecard.Status != TimecardStatus.Draft)
                 {
                     return StatusCode(409, new InvalidStateError() { });
@@ -174,7 +277,7 @@ namespace restapi.Controllers
                 {
                     return StatusCode(409, new EmptyTimecardError() { });
                 }
-                
+                var submittal = new Submittal(){Resource = resource.Resource};
                 var transition = new Transition(submittal, TimecardStatus.Submitted);
                 timecard.Transitions.Add(transition);
                 return Ok(transition);
@@ -215,14 +318,15 @@ namespace restapi.Controllers
                 return NotFound();
             }
         }
-
+        //needs reason
         [HttpPost("{id}/cancellation")]
         [Produces(ContentTypes.Transition)]
         [ProducesResponseType(typeof(Transition), 200)]
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(InvalidStateError), 409)]
         [ProducesResponseType(typeof(EmptyTimecardError), 409)]
-        public IActionResult Cancel(string id, [FromBody] Cancellation cancellation)
+        [ProducesResponseType(typeof(InvalidResource), 409)]
+        public IActionResult Cancel(string id, [FromBody] Cancellation cancellation)//resource should be specified
         {
             Timecard timecard = Database.Find(id);
 
@@ -232,7 +336,14 @@ namespace restapi.Controllers
                 {
                     return StatusCode(409, new InvalidStateError() { });
                 }
-                
+                if (cancellation.Resource ==null)//can be same or different person
+                {
+                    return StatusCode(408, new InvalidResource(){});
+                }
+                if (timecard.Lines.Count < 1)
+                {
+                    return StatusCode(409, new EmptyTimecardError() { });
+                }
                 var transition = new Transition(cancellation, TimecardStatus.Cancelled);
                 timecard.Transitions.Add(transition);
                 return Ok(transition);
@@ -273,12 +384,13 @@ namespace restapi.Controllers
                 return NotFound();
             }
         }
-
+        //needs reason; contract for now to put in reason + resource
         [HttpPost("{id}/rejection")]
         [Produces(ContentTypes.Transition)]
         [ProducesResponseType(typeof(Transition), 200)]
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(InvalidStateError), 409)]
+         [ProducesResponseType(typeof(InvalidResource), 409)]
         [ProducesResponseType(typeof(EmptyTimecardError), 409)]
         public IActionResult Close(string id, [FromBody] Rejection rejection)
         {
@@ -286,11 +398,17 @@ namespace restapi.Controllers
 
             if (timecard != null)
             {
+                 if (rejection.Resource == null || timecard.Resource == rejection.Resource){//resource should be different
+                    return StatusCode(409, new InvalidResource(){});
+                }
                 if (timecard.Status != TimecardStatus.Submitted)
                 {
                     return StatusCode(409, new InvalidStateError() { });
                 }
-                
+                if (timecard.Lines.Count < 1)
+                {
+                    return StatusCode(409, new EmptyTimecardError() { });
+                }
                 var transition = new Transition(rejection, TimecardStatus.Rejected);
                 timecard.Transitions.Add(transition);
                 return Ok(transition);
@@ -338,17 +456,20 @@ namespace restapi.Controllers
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(InvalidStateError), 409)]
         [ProducesResponseType(typeof(EmptyTimecardError), 409)]
-        public IActionResult Approve(string id, [FromBody] Approval approval)
+        [ProducesResponseType(typeof(InvalidResource), 409)]
+        public IActionResult Approve(string id, [FromBody] Approval approval)//resource should be different
         {
             Timecard timecard = Database.Find(id);
 
             if (timecard != null)
             {
+                 if (approval.Resource == null || timecard.Resource == approval.Resource){
+                    return StatusCode(409, new InvalidResource(){});
+                }
                 if (timecard.Status != TimecardStatus.Submitted)
                 {
                     return StatusCode(409, new InvalidStateError() { });
                 }
-                
                 var transition = new Transition(approval, TimecardStatus.Approved);
                 timecard.Transitions.Add(transition);
                 return Ok(transition);

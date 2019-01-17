@@ -20,4 +20,22 @@ namespace restapi.Models
 
         public string Message { get => "No state transition of requested type present in timecard"; }
     }
+     public class UpdateError
+    {
+        public int ErrorCode { get => 103; }
+
+        public string Message { get => "Can only update draft timecards"; }
+    }
+      public class InvalidResource
+    {
+        public int ErrorCode { get => 104; }
+
+        public string Message { get => "Resource transition mismatch or resource missing"; }
+    }
+    public class MissingLineError
+    {
+        public int ErrorCode { get => 105; }
+
+        public string Message { get => "Line requested does not exist"; }
+    }
 }
